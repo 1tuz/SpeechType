@@ -1,77 +1,77 @@
-# handy-remote: Handy met externe Whisper-server
+# handy-remote: Handy with an external Whisper server
 
-**handy-remote** is een fork van [cjpais/Handy](https://github.com/cjpais/Handy) en voegt één optie toe:
-**Modellen → Transcriptieserver → Externe server gebruiken**. Handy stuurt opnames
-dan naar een OpenAI-compatibele server (`{URL}/audio/transcriptions`) en laadt zelf
-geen model op de GPU.
+**handy-remote** is a fork of [cjpais/Handy](https://github.com/cjpais/Handy) that adds one option:
+**Models → Transcription Server → Use external server**. Handy then sends recordings
+to an OpenAI-compatible server (`{URL}/audio/transcriptions`) and does not load a
+model on the GPU itself.
 
-## Downloaden
+## Downloading
 
-Elke push naar `main` bouwt via **Actions → Fork Build**:
+Every push to `main` builds through **Actions → Fork Build**:
 
-- `handy-fork-ubuntu-22.04-x86_64-unknown-linux-gnu`: `.deb` voor Linux
-- `handy-fork-x86_64-pc-windows-msvc`: `.exe`-installer en `.msi` voor Windows
-- `handy-fork-aarch64-apple-darwin`: `.dmg` voor Macs met Apple Silicon (M1 en nieuwer)
-- `handy-fork-x86_64-apple-darwin`: `.dmg` voor Macs met een Intel-processor
+- `handy-fork-ubuntu-22.04-x86_64-unknown-linux-gnu`: `.deb` for Linux
+- `handy-fork-x86_64-pc-windows-msvc`: `.exe` installer and `.msi` for Windows
+- `handy-fork-aarch64-apple-darwin`: `.dmg` for Macs with Apple Silicon (M1 and newer)
+- `handy-fork-x86_64-apple-darwin`: `.dmg` for Macs with an Intel processor
 
-De builds zijn niet ondertekend. Windows SmartScreen waarschuwt daarom bij de eerste
-start: kies _Meer informatie → Toch uitvoeren_.
+The builds are not signed. Windows SmartScreen therefore warns on first launch:
+choose _More info → Run anyway_.
 
-Op de Mac is de app niet door Apple genotariseerd, dus macOS blokkeert de eerste
-start. Sleep Handy uit de `.dmg` naar Programma's, probeer hem te openen en kies
-daarna in _Systeeminstellingen → Privacy en beveiliging_ onderaan _Toch openen_. Of
-in Terminal: `xattr -dr com.apple.quarantine /Applications/Handy.app`. Omdat elke
-build een eigen handtekening heeft, moet je na een update de toegang tot
-Toegankelijkheid en Microfoon mogelijk opnieuw geven.
+On the Mac the app is not notarized by Apple, so macOS blocks the first launch.
+Drag Handy from the `.dmg` to Applications, try to open it, then choose _Open Anyway_
+at the bottom of _System Settings → Privacy & Security_. Or in Terminal:
+`xattr -dr com.apple.quarantine /Applications/Handy.app`. Because every build has
+its own signature, you may have to grant Accessibility and Microphone access again
+after an update.
 
-## Automatisch bijhouden van upstream
+## Following upstream automatically
 
-De workflow **Upstream Sync** kijkt elke dag (en op verzoek via _Actions → Upstream Sync → Run workflow_) of cjpais/Handy een nieuwe release `vX.Y.Z` heeft. Zo ja:
+The **Upstream Sync** workflow checks every day (and on demand via _Actions → Upstream Sync → Run workflow_) whether cjpais/Handy has a new release `vX.Y.Z`. If so:
 
-1. Hij merget die release in een branch `upstream-sync/vX.Y.Z` en opent een pull request naar `main`.
-2. Hij start **Fork Build** op die branch, zodat je ziet of alles compileert.
-3. Is de build groen, dan merge je de pull request. Daarna bouwt **Fork Build** op `main` de installers.
+1. It merges that release into a branch `upstream-sync/vX.Y.Z` and opens a pull request to `main`.
+2. It starts **Fork Build** on that branch, so you can see whether everything compiles.
+3. If the build is green, you merge the pull request. **Fork Build** then builds the installers on `main`.
 
-Er wordt niets vanzelf in `main` gezet: een schone merge kan toch niet bouwen als upstream code verwijdert die de externe-serveroptie gebruikt. Bij een merge-conflict opent de workflow een issue.
+Nothing is put into `main` automatically: a clean merge can still fail to build if upstream removes code that the external server option uses. On a merge conflict the workflow opens an issue.
 
-Optioneel: een secret `SYNC_TOKEN` (PAT met rechten `repo` en `workflow`) laat ook de checks `test` en `code quality` op de pull request draaien, en is nodig als upstream iets onder `.github/workflows` wijzigt.
+Optional: a `SYNC_TOKEN` secret (a PAT with `repo` and `workflow` scopes) also lets the `test` and `code quality` checks run on the pull request, and is required if upstream changes something under `.github/workflows`.
 
-## Een upstream-update handmatig binnenhalen
+## Merging an upstream update by hand
 
-1. Open https://github.com/Hyroniem/handy-remote. Staat er "This branch is N commits behind
-   cjpais/Handy:main", klik dan op **Sync fork → Update branch**.
-2. Lukt dat zonder conflict, dan start **Fork Build** vanzelf. Download en installeer
-   daarna het nieuwe pakket. Upstream verhoogt het versienummer, dus het pakket
-   installeert gewoon over de vorige versie heen.
-3. Meldt GitHub een conflict, kies dan **nooit "Discard commits"**, want daarmee
-   verdwijnt de externe-serveroptie. Los het lokaal op (zie hieronder) of vraag Claude
-   om het te doen.
+1. Open https://github.com/Hyroniem/handy-remote. If it says "This branch is N commits behind
+   cjpais/Handy:main", click **Sync fork → Update branch**.
+2. If that works without a conflict, **Fork Build** starts by itself. Then download and
+   install the new package. Upstream raises the version number, so the package
+   installs over the previous version.
+3. If GitHub reports a conflict, **never choose "Discard commits"**, because that
+   removes the external server option. Resolve it locally (see below) or ask Claude
+   to do it.
 
-Een update binnenhalen is nooit verplicht. De fork blijft werken zoals hij is.
+Taking an update is never mandatory. The fork keeps working as it is.
 
-## Conflicten oplossen (lokaal)
+## Resolving conflicts (locally)
 
 ```bash
 cd ~/apps/handy-fork
 git fetch upstream
-git merge upstream/main   # conflicten oplossen, daarna:
+git merge upstream/main   # resolve conflicts, then:
 git push origin main
 ```
 
-Wat de fork ten opzichte van upstream verandert, voor wie de conflicten oplost:
+What the fork changes compared to upstream, for whoever resolves the conflicts:
 
-| Bestand                                                                                                     | Wijziging                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src-tauri/src/managers/transcription.rs`                                                                   | `transcribe_remote()` + `encode_wav()`; `transcribe()` en `initiate_model_load()` gaan eerst naar de server als `remote_transcription_enabled` aan staat; bij een fout valt `transcribe()` terug op het lokale model (`remote_transcription_fallback`); `probe_remote_server()` test bij de start van de opname of de server bereikbaar is en met een kort stil testverzoek of hij binnen `remote_transcription_busy_timeout_ms` antwoordt (bezet); zo niet, dan laadt het alvast het lokale model en gebruikt `transcribe()` dat; na een geslaagd serververzoek wordt dat model weer ontladen |
-| `src-tauri/src/settings.rs`                                                                                 | velden `remote_transcription_enabled` / `_url` / `_api_key` / `_fallback` / `_busy_timeout_ms`; type `SecretString`; `update_checks_forced_disabled()` geeft altijd `true`                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `src-tauri/src/shortcut/mod.rs`, `lib.rs`                                                                   | vijf `change_remote_transcription_*`-commando's                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `src-tauri/src/actions.rs`                                                                                  | geen live streaming bij een externe server                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `src-tauri/src/commands/models.rs`                                                                          | model niet laden bij een modelwissel als de server aan staat                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `src-tauri/Cargo.toml`                                                                                      | reqwest-feature `multipart`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `src-tauri/tauri.conf.json`                                                                                 | `createUpdaterArtifacts: false`, Windows-`signCommand` verwijderd (geen sleutels in de fork)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `src/components/settings/RemoteTranscription.tsx`, `GeneralSettings.tsx`, `settingsStore.ts`, `bindings.ts` | instellingen-UI                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `src/i18n/locales/*/translation.json`                                                                       | sleutels `settings.remoteTranscription.*`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `.github/workflows/`                                                                                        | `fork-build.yml` toegevoegd; `main-build.yml` en `nix-check.yml` alleen handmatig; `build.yml` heeft een extra stap "Build with Tauri (unsigned macOS)" zonder Apple-variabelen                                                                                                                                                                                                                                                                                                                                                                                                                |
+| File                                                                                                        | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src-tauri/src/managers/transcription.rs`                                                                   | `transcribe_remote()` + `encode_wav()`; `transcribe()` and `initiate_model_load()` go to the server first when `remote_transcription_enabled` is on; on an error `transcribe()` falls back to the local model (`remote_transcription_fallback`); `probe_remote_server()` tests when a recording starts whether the server is reachable and, with a short silent test request, whether it answers within `remote_transcription_busy_timeout_ms` (busy); if not, it loads the local model in advance and `transcribe()` uses that; after a successful server request that model is unloaded again |
+| `src-tauri/src/settings.rs`                                                                                 | fields `remote_transcription_enabled` / `_url` / `_api_key` / `_fallback` / `_busy_timeout_ms`; type `SecretString`; `update_checks_forced_disabled()` always returns `true`                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `src-tauri/src/shortcut/mod.rs`, `lib.rs`                                                                   | five `change_remote_transcription_*` commands                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `src-tauri/src/actions.rs`                                                                                  | no live streaming with an external server                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `src-tauri/src/commands/models.rs`                                                                          | do not load the model on a model switch when the server is on                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `src-tauri/Cargo.toml`                                                                                      | reqwest feature `multipart`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `src-tauri/tauri.conf.json`                                                                                 | `createUpdaterArtifacts: false`, Windows `signCommand` removed (no keys in the fork)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `src/components/settings/RemoteTranscription.tsx`, `GeneralSettings.tsx`, `settingsStore.ts`, `bindings.ts` | settings UI                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `src/i18n/locales/*/translation.json`                                                                       | keys `settings.remoteTranscription.*`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `.github/workflows/`                                                                                        | `fork-build.yml` added; `main-build.yml` and `nix-check.yml` manual only; `build.yml` has an extra step "Build with Tauri (unsigned macOS)" without Apple variables                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
-Controleer na een merge dat `bun run format:check` en `cargo test` slagen, of laat de
-workflows _test_ en _code quality_ dat doen.
+After a merge, check that `bun run format:check` and `cargo test` pass, or let the
+_test_ and _code quality_ workflows do it.
