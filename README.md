@@ -8,7 +8,7 @@
 > - Staying in sync with upstream: a daily workflow ([Upstream Sync](.github/workflows/upstream-sync.yml)) checks for a new upstream release tag (`vX.Y.Z`) and, if there is one, merges that tag into a branch and opens a pull request. This is a real `git merge`, so upstream history is preserved; nothing is copied or rewritten. The fork is only synced to upstream _releases_, not to every commit on upstream `main`, and a pull request is merged only after Fork Build compiles it and the remote transcription option has been tested. Merge conflicts open an issue instead.
 > - Unsigned builds for Linux, Windows and macOS (Apple Silicon and Intel): **Actions → Fork Build → Artifacts**. On macOS, allow the first launch under _System Settings → Privacy & Security → Open Anyway_, or run `xattr -dr com.apple.quarantine /Applications/Handy.app`. The built-in updater is disabled, since it would install upstream Handy over this build.
 >
-> Upstream Handy is local-only by design and will not add remote transcription, so please report issues with this feature [here](https://github.com/Hyroniem/handy-remote/issues), not upstream. Maintenance notes (in Dutch): [FORK.md](FORK.md).
+> Upstream Handy is local-only by design and will not add remote transcription, so please report issues with this feature [here](https://github.com/Hyroniem/handy-remote/issues), not upstream. Maintenance notes: [FORK.md](FORK.md).
 
 [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/invite/WVBeWsNXK4)
 
