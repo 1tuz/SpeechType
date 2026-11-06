@@ -285,6 +285,10 @@ pub struct TranscriptionManager {
     /// probes onto a server that is already busy, and so `transcribe()` can
     /// wait for the answer of a probe that started with the recording.
     remote_probe_in_flight: Arc<AtomicBool>,
+    /// Until when the server counts as busy because a real request ran past
+    /// its deadline. The silent probe can't overrule this: a server that
+    /// skips silence answers it at once even while its GPU is saturated.
+    remote_busy_until: Arc<Mutex<Option<Instant>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -325,6 +329,7 @@ impl TranscriptionManager {
             language_detector: Arc::new(LanguageDetector::default()),
             remote_server_status: Arc::new(Mutex::new(None)),
             remote_probe_in_flight: Arc::new(AtomicBool::new(false)),
+            remote_busy_until: Arc::new(Mutex::new(None)),
         };
 
         // Start the idle watcher
@@ -745,6 +750,10 @@ impl TranscriptionManager {
                 settings.remote_transcription_fallback && !settings.selected_model.is_empty();
             let busy_timeout = remote_busy_timeout(&settings);
             let state = match busy_timeout {
+                Some(_) if can_fall_back && manager.remote_busy_held() => {
+                    debug!("Transcription server timed out recently; not probing it");
+                    RemoteServerState::Busy
+                }
                 Some(timeout) if can_fall_back => probe_remote_responsiveness(&settings, timeout),
                 _ if remote_server_reachable(&settings.remote_transcription_url) => {
                     RemoteServerState::Online
@@ -789,6 +798,14 @@ impl TranscriptionManager {
         });
     }
 
+    /// Whether a real request timed out recently enough to skip the server.
+    fn remote_busy_held(&self) -> bool {
+        self.remote_busy_until
+            .lock()
+            .unwrap()
+            .is_some_and(|until| Instant::now() < until)
+    }
+
     /// The state a recent probe or request found, if it is still current.
     fn recent_remote_server_state(&self) -> Option<RemoteServerState> {
         self.remote_server_status
@@ -796,6 +813,43 @@ impl TranscriptionManager {
             .unwrap()
             .filter(|s| s.checked_at.elapsed() < REMOTE_STATUS_MAX_AGE)
             .map(|s| s.state)
+    }
+
+    /// Send the recording to the server. With the fallback and busy detection
+    /// on, the server gets a deadline that grows with the recording, and the
+    /// local model starts loading once the busy timeout passes without an
+    /// answer, so a slow server costs little more than the deadline.
+    fn transcribe_remote_with_deadline(
+        &self,
+        audio: &[f32],
+        settings: &AppSettings,
+        can_fall_back: bool,
+    ) -> Result<String> {
+        let Some(busy_timeout) = remote_busy_timeout(settings).filter(|_| can_fall_back) else {
+            return transcribe_remote(audio, settings, REMOTE_TRANSCRIPTION_TIMEOUT);
+        };
+        let deadline = remote_answer_deadline(busy_timeout, audio.len());
+
+        let answered = Arc::new(AtomicBool::new(false));
+        {
+            let answered = answered.clone();
+            let manager = self.clone();
+            let model = settings.selected_model.clone();
+            thread::spawn(move || {
+                thread::sleep(busy_timeout);
+                if !answered.load(Ordering::Acquire) {
+                    info!(
+                        "Transcription server has not answered after {}ms; preloading local model '{}'",
+                        busy_timeout.as_millis(),
+                        model
+                    );
+                    manager.initiate_local_model_load(false);
+                }
+            });
+        }
+        let result = transcribe_remote(audio, settings, deadline);
+        answered.store(true, Ordering::Release);
+        result
     }
 
     /// A recording shorter than the busy timeout ends before its probe has
@@ -1142,11 +1196,12 @@ impl TranscriptionManager {
                     "server busy: no answer within {}ms at recording start",
                     settings.remote_transcription_busy_timeout_ms
                 )),
-                _ => transcribe_remote(&audio, &settings),
+                _ => self.transcribe_remote_with_deadline(&audio, &settings, can_fall_back),
             };
             match result {
                 Ok(text) => {
                     self.set_remote_server_state(RemoteServerState::Online);
+                    *self.remote_busy_until.lock().unwrap() = None;
                     // The server is back: free the model the fallback loaded,
                     // unless it is still loading for a concurrent request.
                     if self.is_model_loaded() && !*self.is_loading.lock().unwrap() {
@@ -1163,6 +1218,10 @@ impl TranscriptionManager {
                 Err(e) => {
                     if e.is::<RemoteUnreachable>() {
                         self.set_remote_server_state(RemoteServerState::Offline);
+                    } else if e.is::<RemoteTimedOut>() && can_fall_back {
+                        self.set_remote_server_state(RemoteServerState::Busy);
+                        *self.remote_busy_until.lock().unwrap() =
+                            Some(Instant::now() + REMOTE_BUSY_HOLD);
                     }
                     if !settings.remote_transcription_fallback {
                         return Err(e);
@@ -1617,6 +1676,20 @@ const REMOTE_PROBE_SLACK: Duration = Duration::from_millis(500);
 /// servers that reject very short audio, short enough to cost nothing.
 const REMOTE_PROBE_AUDIO_SAMPLES: usize = 8_000;
 
+/// Server time allowed per second of audio when a fallback is ready. A Whisper
+/// server on a GPU that is free needs a small fraction of this.
+const REMOTE_SECONDS_PER_AUDIO_SECOND: f64 = 0.25;
+/// How long the server is skipped after a request ran past its deadline.
+const REMOTE_BUSY_HOLD: Duration = Duration::from_secs(30);
+
+/// How long a recording of `samples` (16 kHz) may take on the server before
+/// the local model takes over: the busy timeout plus a share of its length.
+fn remote_answer_deadline(busy_timeout: Duration, samples: usize) -> Duration {
+    let audio_secs = samples as f64 / 16_000.0;
+    (busy_timeout + Duration::from_secs_f64(audio_secs * REMOTE_SECONDS_PER_AUDIO_SECOND))
+        .min(REMOTE_TRANSCRIPTION_TIMEOUT)
+}
+
 /// The busy timeout from the settings, or `None` when busy detection is off.
 fn remote_busy_timeout(settings: &AppSettings) -> Option<Duration> {
     (settings.remote_transcription_busy_timeout_ms > 0)
@@ -1663,7 +1736,7 @@ struct RemoteTranscriptionResponse {
 /// Transcribe via an OpenAI-compatible server (`/audio/transcriptions`, or
 /// `/audio/translations` when translating to English). The local model is
 /// never loaded on this path.
-fn transcribe_remote(audio: &[f32], settings: &AppSettings) -> Result<String> {
+fn transcribe_remote(audio: &[f32], settings: &AppSettings, timeout: Duration) -> Result<String> {
     let st = Instant::now();
     let base_url = settings.remote_transcription_url.trim_end_matches('/');
     if base_url.is_empty() {
@@ -1690,7 +1763,7 @@ fn transcribe_remote(audio: &[f32], settings: &AppSettings) -> Result<String> {
         language: send_language.then_some(language),
         prompt,
         api_key,
-        timeout: REMOTE_TRANSCRIPTION_TIMEOUT,
+        timeout,
         connect_timeout: REMOTE_TRANSCRIPTION_CONNECT_TIMEOUT,
     })?;
     if !status.is_success() {
@@ -2432,6 +2505,22 @@ mod tests {
 
     fn languages(codes: &[&str]) -> Vec<String> {
         codes.iter().map(|code| (*code).to_string()).collect()
+    }
+
+    #[test]
+    fn remote_deadline_grows_with_the_recording() {
+        let busy = Duration::from_secs(2);
+        // 10 s of audio: 2 s + 10 s * 0.25.
+        assert_eq!(
+            remote_answer_deadline(busy, 160_000),
+            Duration::from_millis(4_500)
+        );
+        assert_eq!(remote_answer_deadline(busy, 0), busy);
+        // Never longer than without a fallback.
+        assert_eq!(
+            remote_answer_deadline(busy, 16_000 * 3_600),
+            REMOTE_TRANSCRIPTION_TIMEOUT
+        );
     }
 
     #[test]
