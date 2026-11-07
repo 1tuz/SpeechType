@@ -755,7 +755,7 @@ impl TranscriptionManager {
                     RemoteServerState::Busy
                 }
                 Some(timeout) if can_fall_back => probe_remote_responsiveness(&settings, timeout),
-                _ if remote_server_reachable(&settings.remote_transcription_url) => {
+                _ if remote_server_reachable(remote_transcription_base_url(&settings)) => {
                     RemoteServerState::Online
                 }
                 _ => RemoteServerState::Offline,
@@ -767,7 +767,7 @@ impl TranscriptionManager {
                 .remote_probe_in_flight
                 .store(false, Ordering::Release);
 
-            let url = &settings.remote_transcription_url;
+            let url = remote_transcription_base_url(&settings);
             match state {
                 RemoteServerState::Online => debug!("Transcription server is responsive"),
                 _ if !can_fall_back => info!("Transcription server at {} is {:?}", url, state),
@@ -1690,8 +1690,23 @@ fn remote_answer_deadline(busy_timeout: Duration, samples: usize) -> Duration {
         .min(REMOTE_TRANSCRIPTION_TIMEOUT)
 }
 
+const SPEECH_RUNTIME_ORIGIN: &str = "http://127.0.0.1:8477";
+
+fn remote_transcription_base_url(settings: &AppSettings) -> &str {
+    if settings.remote_transcription_speech_runtime {
+        SPEECH_RUNTIME_ORIGIN
+    } else {
+        &settings.remote_transcription_url
+    }
+}
+
 /// The busy timeout from the settings, or `None` when busy detection is off.
 fn remote_busy_timeout(settings: &AppSettings) -> Option<Duration> {
+    // Speech Runtime may need to compile a Neural Engine model on first use.
+    // The generic Whisper-server 2s deadline would incorrectly trigger fallback.
+    if settings.remote_transcription_speech_runtime {
+        return None;
+    }
     (settings.remote_transcription_busy_timeout_ms > 0)
         .then(|| Duration::from_millis(settings.remote_transcription_busy_timeout_ms))
 }
@@ -1733,49 +1748,183 @@ struct RemoteTranscriptionResponse {
     text: String,
 }
 
+/// Speech Runtime accepts the WAV body directly, and requires its own bearer
+/// token and a model query parameter. Its API is not OpenAI multipart.
+#[cfg(target_os = "macos")]
+fn transcribe_speech_runtime(
+    audio: &[f32],
+    settings: &AppSettings,
+    timeout: Duration,
+) -> Result<String> {
+    let model = settings
+        .remote_transcription_speech_runtime_model
+        .trim()
+        .to_string();
+    if model.is_empty() {
+        return Err(anyhow::anyhow!("Speech Runtime model must not be empty"));
+    }
+    if settings.translate_to_english {
+        return Err(anyhow::anyhow!(
+            "Speech Runtime does not support translation; disable Translate to English"
+        ));
+    }
+    let home = std::env::var_os("HOME")
+        .ok_or_else(|| anyhow::anyhow!("HOME is missing; cannot locate Speech Runtime token"))?;
+    let path =
+        std::path::PathBuf::from(home).join("Library/Application Support/SpeechRuntime/token");
+    let token = std::fs::read_to_string(&path).map_err(|e| {
+        anyhow::anyhow!(
+            "Cannot read Speech Runtime token at {}: {}",
+            path.display(),
+            e
+        )
+    })?;
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        return Err(anyhow::anyhow!("Speech Runtime token file is empty"));
+    }
+    let language = settings.selected_language.clone();
+    let wav = encode_wav(audio)?;
+
+    // Handy may call this from an async task: keep the network runtime on its
+    // own thread, as in the existing remote transcription transport.
+    thread::spawn(move || {
+        tauri::async_runtime::block_on(async move {
+            let client = reqwest::Client::builder()
+                .timeout(timeout)
+                .connect_timeout(REMOTE_TRANSCRIPTION_CONNECT_TIMEOUT)
+                .build()?;
+            let models_response = client
+                .get(format!("{SPEECH_RUNTIME_ORIGIN}/v1/models"))
+                .bearer_auth(&token)
+                .send()
+                .await?;
+            let status = models_response.status();
+            let body = models_response.text().await?;
+            if !status.is_success() {
+                return Err(anyhow::anyhow!(
+                    "Speech Runtime model list returned {}: {}",
+                    status,
+                    body
+                ));
+            }
+            let list: serde_json::Value = serde_json::from_str(&body)?;
+            let entry = list["models"]
+                .as_array()
+                .and_then(|models| {
+                    models
+                        .iter()
+                        .find(|item| item["model"].as_str() == Some(model.as_str()))
+                })
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Speech Runtime model '{}' is not configured", model)
+                })?;
+            if entry["loaded"].as_bool() != Some(true) {
+                let response = client
+                    .post(format!("{SPEECH_RUNTIME_ORIGIN}/v1/models/load"))
+                    .bearer_auth(&token)
+                    .json(&serde_json::json!({ "model": model.clone() }))
+                    .send()
+                    .await?;
+                let status = response.status();
+                if !status.is_success() {
+                    return Err(anyhow::anyhow!(
+                        "Speech Runtime model load returned {}: {}",
+                        status,
+                        response.text().await?
+                    ));
+                }
+            }
+            let mut request = client
+                .post(format!("{SPEECH_RUNTIME_ORIGIN}/v1/audio/transcriptions"))
+                .bearer_auth(&token)
+                .header(reqwest::header::CONTENT_TYPE, "audio/wav")
+                .query(&[("model", model.as_str()), ("priority", "interactive")])
+                .body(wav);
+            if !language.is_empty() && language != "auto" {
+                request = request.query(&[("language", language.as_str())]);
+            }
+            let response = request.send().await?;
+            let status = response.status();
+            let body = response.text().await?;
+            if !status.is_success() {
+                return Err(anyhow::anyhow!(
+                    "Speech Runtime transcription returned {}: {}",
+                    status,
+                    body
+                ));
+            }
+            let answer: RemoteTranscriptionResponse = serde_json::from_str(&body).map_err(|e| {
+                anyhow::anyhow!("Invalid Speech Runtime transcription response: {}", e)
+            })?;
+            Ok(answer.text)
+        })
+    })
+    .join()
+    .map_err(|_| anyhow::anyhow!("Speech Runtime transcription thread panicked"))?
+}
+
+#[cfg(not(target_os = "macos"))]
+fn transcribe_speech_runtime(
+    _audio: &[f32],
+    _settings: &AppSettings,
+    _timeout: Duration,
+) -> Result<String> {
+    Err(anyhow::anyhow!(
+        "Speech Runtime integration is supported on macOS only"
+    ))
+}
+
 /// Transcribe via an OpenAI-compatible server (`/audio/transcriptions`, or
 /// `/audio/translations` when translating to English). The local model is
 /// never loaded on this path.
 fn transcribe_remote(audio: &[f32], settings: &AppSettings, timeout: Duration) -> Result<String> {
     let st = Instant::now();
-    let base_url = settings.remote_transcription_url.trim_end_matches('/');
-    if base_url.is_empty() {
-        return Err(anyhow::anyhow!("No transcription server URL configured."));
-    }
-    let endpoint = if settings.translate_to_english {
-        "translations"
+    let (url, text) = if settings.remote_transcription_speech_runtime {
+        (
+            format!("{SPEECH_RUNTIME_ORIGIN}/v1/audio/transcriptions"),
+            transcribe_speech_runtime(audio, settings, timeout)?,
+        )
     } else {
-        "transcriptions"
+        let base_url = settings.remote_transcription_url.trim_end_matches('/');
+        if base_url.is_empty() {
+            return Err(anyhow::anyhow!("No transcription server URL configured."));
+        }
+        let endpoint = if settings.translate_to_english {
+            "translations"
+        } else {
+            "transcriptions"
+        };
+        let url = format!("{}/audio/{}", base_url, endpoint);
+        let language = settings.selected_language.clone();
+        let send_language = !settings.translate_to_english && language != "auto";
+        // Whisper servers take custom words as the initial prompt, the same way
+        // the local whisper path does.
+        let prompt = settings.custom_words.join(", ");
+        let api_key = settings.remote_transcription_api_key.trim().to_string();
+        let wav = encode_wav(audio)?;
+
+        let (status, body) = send_remote_request(RemoteRequest {
+            url: url.clone(),
+            wav,
+            language: send_language.then_some(language),
+            prompt,
+            api_key,
+            timeout,
+            connect_timeout: REMOTE_TRANSCRIPTION_CONNECT_TIMEOUT,
+        })?;
+        if !status.is_success() {
+            return Err(anyhow::anyhow!(
+                "Transcription server returned {}: {}",
+                status,
+                body.trim()
+            ));
+        }
+        let text = serde_json::from_str::<RemoteTranscriptionResponse>(&body)
+            .map_err(|e| anyhow::anyhow!("Unexpected response from server: {}", e))?
+            .text;
+        (url, text)
     };
-    let url = format!("{}/audio/{}", base_url, endpoint);
-
-    let language = settings.selected_language.clone();
-    let send_language = !settings.translate_to_english && language != "auto";
-    // Whisper servers take custom words as the initial prompt, the same way
-    // the local whisper path does.
-    let prompt = settings.custom_words.join(", ");
-    let api_key = settings.remote_transcription_api_key.trim().to_string();
-    let wav = encode_wav(audio)?;
-
-    let (status, body) = send_remote_request(RemoteRequest {
-        url: url.clone(),
-        wav,
-        language: send_language.then_some(language),
-        prompt,
-        api_key,
-        timeout,
-        connect_timeout: REMOTE_TRANSCRIPTION_CONNECT_TIMEOUT,
-    })?;
-    if !status.is_success() {
-        return Err(anyhow::anyhow!(
-            "Transcription server returned {}: {}",
-            status,
-            body.trim()
-        ));
-    }
-    let text = serde_json::from_str::<RemoteTranscriptionResponse>(&body)
-        .map_err(|e| anyhow::anyhow!("Unexpected response from server: {}", e))?
-        .text;
 
     let output_language = if settings.translate_to_english {
         OutputLanguageEvidence::TranslatedToEnglish
@@ -2502,6 +2651,26 @@ pub fn get_available_accelerators(tm: &TranscriptionManager) -> AvailableAcceler
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn speech_runtime_uses_its_local_endpoint_and_skips_whisper_busy_probe() {
+        let mut settings = AppSettings::default();
+        assert_eq!(
+            remote_transcription_base_url(&settings),
+            settings.remote_transcription_url.as_str()
+        );
+        assert!(remote_busy_timeout(&settings).is_some());
+        settings.remote_transcription_speech_runtime = true;
+        assert_eq!(
+            remote_transcription_base_url(&settings),
+            SPEECH_RUNTIME_ORIGIN
+        );
+        assert!(remote_busy_timeout(&settings).is_none());
+        assert_eq!(
+            settings.remote_transcription_speech_runtime_model,
+            "parakeet-ultra"
+        );
+    }
 
     fn languages(codes: &[&str]) -> Vec<String> {
         codes.iter().map(|code| (*code).to_string()).collect()

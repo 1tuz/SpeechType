@@ -174,6 +174,12 @@ const settingUpdaters: {
     commands.changeRemoteTranscriptionEnabledSetting(value as boolean),
   remote_transcription_url: (value) =>
     commands.changeRemoteTranscriptionUrlSetting(value as string),
+  remote_transcription_speech_runtime: (value) =>
+    commands.changeRemoteTranscriptionSpeechRuntimeSetting(value as boolean),
+  remote_transcription_speech_runtime_model: (value) =>
+    commands.changeRemoteTranscriptionSpeechRuntimeModelSetting(
+      value as string,
+    ),
   remote_transcription_api_key: (value) =>
     commands.changeRemoteTranscriptionApiKeySetting(value as string),
   remote_transcription_fallback: (value) =>

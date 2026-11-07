@@ -603,6 +603,13 @@ pub struct AppSettings {
     /// holds the model in GPU memory.
     #[serde(default)]
     pub remote_transcription_enabled: bool,
+    /// Route dictation through the shared local Speech Runtime instead of a
+    /// generic multipart OpenAI-style server. macOS only.
+    #[serde(default)]
+    pub remote_transcription_speech_runtime: bool,
+    /// Model declared by Speech Runtime (not the local Handy fallback model).
+    #[serde(default = "default_speech_runtime_model")]
+    pub remote_transcription_speech_runtime_model: String,
     /// Base URL of the OpenAI-compatible API, including the `/v1` part.
     #[serde(default = "default_remote_transcription_url")]
     pub remote_transcription_url: String,
@@ -624,6 +631,10 @@ pub struct AppSettings {
 
 fn default_remote_transcription_url() -> String {
     "http://127.0.0.1:8000/v1".to_string()
+}
+
+fn default_speech_runtime_model() -> String {
+    "parakeet-ultra".to_string()
 }
 
 fn default_remote_transcription_fallback() -> bool {
@@ -1131,6 +1142,8 @@ pub fn get_default_settings() -> AppSettings {
         language_detection_window_secs: default_language_detection_window_secs(),
         overlay_style: default_overlay_style(),
         remote_transcription_enabled: false,
+        remote_transcription_speech_runtime: false,
+        remote_transcription_speech_runtime_model: default_speech_runtime_model(),
         remote_transcription_url: default_remote_transcription_url(),
         remote_transcription_api_key: SecretString::default(),
         remote_transcription_fallback: default_remote_transcription_fallback(),

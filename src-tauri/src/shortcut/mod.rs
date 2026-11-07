@@ -1430,6 +1430,34 @@ pub fn change_remote_transcription_url_setting(app: AppHandle, url: String) -> R
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_remote_transcription_speech_runtime_setting(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.remote_transcription_speech_runtime = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_remote_transcription_speech_runtime_model_setting(
+    app: AppHandle,
+    model: String,
+) -> Result<(), String> {
+    let model = model.trim();
+    if model.is_empty() {
+        return Err("Speech Runtime model must not be empty".to_string());
+    }
+    let mut settings = settings::get_settings(&app);
+    settings.remote_transcription_speech_runtime_model = model.to_string();
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_remote_transcription_api_key_setting(
     app: AppHandle,
     api_key: String,

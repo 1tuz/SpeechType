@@ -925,6 +925,12 @@
         "description": "When the server accepts the connection but doesn't answer a short test request within this time, for example because it is still transcribing a long recording, Handy uses the local model. Once the server answers quickly again, it switches back. Off only checks whether the server can be reached.",
         "off": "Off",
         "seconds": "{{seconds}} s"
+      },
+      "speechRuntime": {
+        "label": "Use Speech Runtime (macOS)",
+        "description": "Use the local shared Speech Runtime instead of a multipart Whisper server. No model is loaded inside Handy.",
+        "modelTitle": "Speech Runtime Model",
+        "modelDescription": "Choose a model declared in Speech Runtime: parakeet-ultra or gigaam. Handy reads the bearer token automatically from ~/Library/Application Support/SpeechRuntime/token."
       }
     }
   },

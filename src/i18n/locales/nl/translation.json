@@ -925,6 +925,12 @@
         "description": "Accepteert de server de verbinding, maar beantwoordt hij een kort testverzoek niet binnen deze tijd, bijvoorbeeld omdat hij nog een lange opname uitwerkt, dan gebruikt Handy het lokale model. Hetzelfde gebeurt als een opname langer duurt dan deze tijd plus een kwart van de opnameduur; de server wordt dan 30 seconden overgeslagen. Zodra de server weer snel reageert, schakelt Handy terug. Uit controleert alleen of de server bereikbaar is.",
         "off": "Uit",
         "seconds": "{{seconds}} s"
+      },
+      "speechRuntime": {
+        "label": "Use Speech Runtime (macOS)",
+        "description": "Use the local shared Speech Runtime instead of a multipart Whisper server. No model is loaded inside Handy.",
+        "modelTitle": "Speech Runtime Model",
+        "modelDescription": "Choose a model declared in Speech Runtime: parakeet-ultra or gigaam. Handy reads the bearer token automatically from ~/Library/Application Support/SpeechRuntime/token."
       }
     }
   },

@@ -407,6 +407,22 @@ async changeRemoteTranscriptionApiKeySetting(apiKey: string) : Promise<Result<nu
     else return { status: "error", error: e  as any };
 }
 },
+async changeRemoteTranscriptionSpeechRuntimeSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_remote_transcription_speech_runtime_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeRemoteTranscriptionSpeechRuntimeModelSetting(model: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_remote_transcription_speech_runtime_model_setting", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeRemoteTranscriptionFallbackSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_remote_transcription_fallback_setting", { enabled }) };
@@ -1218,6 +1234,14 @@ overlay_style?: OverlayStyle;
  * holds the model in GPU memory.
  */
 remote_transcription_enabled?: boolean; 
+/**
+ * Use local Speech Runtime (direct WAV, local bearer token) rather than OpenAI multipart.
+ */
+remote_transcription_speech_runtime?: boolean;
+/**
+ * Model declared by Speech Runtime, independently of Handy's fallback model.
+ */
+remote_transcription_speech_runtime_model?: string;
 /**
  * Base URL of the OpenAI-compatible API, including the `/v1` part.
  */

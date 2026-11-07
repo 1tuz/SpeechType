@@ -907,6 +907,12 @@
         "label": "Use External Server",
         "description": "Send recordings to an OpenAI-compatible Whisper server instead of loading a local model. Saves GPU memory when that server already runs."
       },
+      "speechRuntime": {
+        "label": "\u0418\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u044c Speech Runtime (macOS)",
+        "description": "\u041b\u043e\u043a\u0430\u043b\u044c\u043d\u043e\u0435 \u0440\u0430\u0441\u043f\u043e\u0437\u043d\u0430\u0432\u0430\u043d\u0438\u0435 \u0447\u0435\u0440\u0435\u0437 Speech Runtime. Handy \u043d\u0435 \u0437\u0430\u0433\u0440\u0443\u0436\u0430\u0435\u0442 \u0441\u043e\u0431\u0441\u0442\u0432\u0435\u043d\u043d\u0443\u044e \u043c\u043e\u0434\u0435\u043b\u044c.",
+        "modelTitle": "\u041c\u043e\u0434\u0435\u043b\u044c Speech Runtime",
+        "modelDescription": "\u0418\u043c\u044f \u043c\u043e\u0434\u0435\u043b\u0438 \u0438\u0437 Speech Runtime: parakeet-ultra \u0438\u043b\u0438 gigaam. \u0422\u043e\u043a\u0435\u043d \u0447\u0438\u0442\u0430\u0435\u0442\u0441\u044f \u0438\u0437 ~/Library/Application Support/SpeechRuntime/token."
+      },
       "url": {
         "title": "Server URL",
         "description": "Base URL of the API, including /v1. Handy posts to {URL}/audio/transcriptions."

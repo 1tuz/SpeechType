@@ -907,6 +907,12 @@
         "label": "Use External Server",
         "description": "Send recordings to an OpenAI-compatible Whisper server instead of loading a local model. Saves GPU memory when that server already runs."
       },
+      "speechRuntime": {
+        "label": "Use Speech Runtime (macOS)",
+        "description": "Use the local shared Speech Runtime instead of a multipart Whisper server. No model is loaded inside Handy.",
+        "modelTitle": "Speech Runtime Model",
+        "modelDescription": "Choose a model declared in Speech Runtime: parakeet-ultra or gigaam. Handy reads the bearer token automatically from ~/Library/Application Support/SpeechRuntime/token."
+      },
       "url": {
         "title": "Server URL",
         "description": "Base URL of the API, including /v1. Handy posts to {URL}/audio/transcriptions."
