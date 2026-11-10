@@ -9,7 +9,7 @@ import { notify } from "@/stores/noticeStore";
 
 const KEYBOARD_IMPLEMENTATION_OPTIONS: DropdownOption[] = [
   { value: "tauri", label: "Tauri Global Shortcut" },
-  { value: "handy_keys", label: "Handy Keys" },
+  { value: "handy_keys", label: "SpeechType Keys" },
   // Linux only: for Wayland, where the compositor owns keybindings and
   // triggers Handy via `handy --toggle-transcription`.
   ...(type() === "linux" ? [{ value: "none", label: "None" }] : []),
