@@ -289,6 +289,9 @@ pub struct TranscriptionManager {
     /// its deadline. The silent probe can't overrule this: a server that
     /// skips silence answers it at once even while its GPU is saturated.
     remote_busy_until: Arc<Mutex<Option<Instant>>>,
+    /// Generation changed by Cancel; in-flight Speech Runtime HTTP futures
+    /// are dropped instead of waiting for their 300-second deadline.
+    remote_cancel_generation: Arc<AtomicU64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -330,6 +333,7 @@ impl TranscriptionManager {
             remote_server_status: Arc::new(Mutex::new(None)),
             remote_probe_in_flight: Arc::new(AtomicBool::new(false)),
             remote_busy_until: Arc::new(Mutex::new(None)),
+            remote_cancel_generation: Arc::new(AtomicU64::new(0)),
         };
 
         // Start the idle watcher
@@ -746,19 +750,34 @@ impl TranscriptionManager {
         let manager = self.clone();
         thread::spawn(move || {
             let settings = get_settings(&manager.app_handle);
-            let can_fall_back =
-                settings.remote_transcription_fallback && !settings.selected_model.is_empty();
+            let can_fall_back = settings.remote_transcription_fallback
+                && !settings.remote_transcription_speech_runtime
+                && !settings.selected_model.is_empty();
             let busy_timeout = remote_busy_timeout(&settings);
-            let state = match busy_timeout {
-                Some(_) if can_fall_back && manager.remote_busy_held() => {
-                    debug!("Transcription server timed out recently; not probing it");
-                    RemoteServerState::Busy
+            // A TCP socket alone does not mean the chosen model is installed
+            // or ready. Warm the *single* Parakeet model while dictation runs.
+            let state = if settings.remote_transcription_speech_runtime {
+                match probe_speech_runtime_ready() {
+                    Ok(()) => RemoteServerState::Online,
+                    Err(e) => {
+                        warn!("Speech Runtime Parakeet preflight failed: {e}");
+                        RemoteServerState::Offline
+                    }
                 }
-                Some(timeout) if can_fall_back => probe_remote_responsiveness(&settings, timeout),
-                _ if remote_server_reachable(remote_transcription_base_url(&settings)) => {
-                    RemoteServerState::Online
+            } else {
+                match busy_timeout {
+                    Some(_) if can_fall_back && manager.remote_busy_held() => {
+                        debug!("Transcription server timed out recently; not probing it");
+                        RemoteServerState::Busy
+                    }
+                    Some(timeout) if can_fall_back => {
+                        probe_remote_responsiveness(&settings, timeout)
+                    }
+                    _ if remote_server_reachable(remote_transcription_base_url(&settings)) => {
+                        RemoteServerState::Online
+                    }
+                    _ => RemoteServerState::Offline,
                 }
-                _ => RemoteServerState::Offline,
             };
             // Record the state before clearing the flag: transcribe() reads it
             // as soon as the flag drops.
@@ -825,8 +844,18 @@ impl TranscriptionManager {
         settings: &AppSettings,
         can_fall_back: bool,
     ) -> Result<String> {
+        let cancel = Some((
+            Arc::clone(&self.remote_cancel_generation),
+            self.remote_cancel_generation.load(Ordering::Acquire),
+        ));
         let Some(busy_timeout) = remote_busy_timeout(settings).filter(|_| can_fall_back) else {
-            return transcribe_remote(audio, settings, REMOTE_TRANSCRIPTION_TIMEOUT);
+            return transcribe_remote(
+                audio,
+                settings,
+                REMOTE_TRANSCRIPTION_TIMEOUT,
+                "interactive",
+                cancel,
+            );
         };
         let deadline = remote_answer_deadline(busy_timeout, audio.len());
 
@@ -847,7 +876,7 @@ impl TranscriptionManager {
                 }
             });
         }
-        let result = transcribe_remote(audio, settings, deadline);
+        let result = transcribe_remote(audio, settings, deadline, "interactive", cancel);
         answered.store(true, Ordering::Release);
         result
     }
@@ -1106,6 +1135,7 @@ impl TranscriptionManager {
     /// Abandon any live decode without producing text (e.g. on cancel). A
     /// chunk already decoding finishes; audio queued behind it is dropped.
     pub fn cancel_stream(&self) {
+        self.remote_cancel_generation.fetch_add(1, Ordering::AcqRel);
         if let Some(route) = self.router.take() {
             route.cancelled.store(true, Ordering::Release);
             let _ = route.tx.send(StreamCmd::Cancel);
@@ -1118,6 +1148,7 @@ impl TranscriptionManager {
     /// it is stopped; the model stays loaded and the next use starts a fresh
     /// worker for it.
     pub fn cancel_transcription(&self) {
+        self.remote_cancel_generation.fetch_add(1, Ordering::AcqRel);
         self.engine.cancel();
     }
 
@@ -1174,9 +1205,29 @@ impl TranscriptionManager {
         let settings = get_settings(&self.app_handle);
 
         if settings.remote_transcription_enabled {
-            let can_fall_back =
-                settings.remote_transcription_fallback && !settings.selected_model.is_empty();
-            if can_fall_back {
+            // Speech Runtime is strictly Parakeet-only. Never silently switch
+            // to Handy's built-in Whisper (including on a failing preflight).
+            let can_fall_back = settings.remote_transcription_fallback
+                && !settings.remote_transcription_speech_runtime
+                && !settings.selected_model.is_empty();
+            if settings.remote_transcription_speech_runtime {
+                // The first ANE compilation can take tens of seconds. Wait
+                // without blocking cancellation; a cancelled recording must
+                // not create a new transcription after the preflight finishes.
+                let generation = self.remote_cancel_generation.load(Ordering::Acquire);
+                let deadline = Instant::now() + Duration::from_secs(40);
+                while self.remote_probe_in_flight.load(Ordering::Acquire)
+                    && Instant::now() < deadline
+                {
+                    if self.remote_cancel_generation.load(Ordering::Acquire) != generation {
+                        return Err(anyhow::anyhow!("Speech Runtime dictation cancelled"));
+                    }
+                    thread::sleep(Duration::from_millis(20));
+                }
+                if self.remote_cancel_generation.load(Ordering::Acquire) != generation {
+                    return Err(anyhow::anyhow!("Speech Runtime dictation cancelled"));
+                }
+            } else if can_fall_back {
                 if let Some(busy_timeout) = remote_busy_timeout(&settings) {
                     self.wait_for_remote_probe(busy_timeout);
                 }
@@ -1223,7 +1274,7 @@ impl TranscriptionManager {
                         *self.remote_busy_until.lock().unwrap() =
                             Some(Instant::now() + REMOTE_BUSY_HOLD);
                     }
-                    if !settings.remote_transcription_fallback {
+                    if !can_fall_back {
                         return Err(e);
                     }
                     if settings.selected_model.is_empty() {
@@ -1691,6 +1742,7 @@ fn remote_answer_deadline(busy_timeout: Duration, samples: usize) -> Duration {
 }
 
 const SPEECH_RUNTIME_ORIGIN: &str = "http://127.0.0.1:8477";
+const SPEECH_RUNTIME_MODEL: &str = "parakeet-ultra";
 
 fn remote_transcription_base_url(settings: &AppSettings) -> &str {
     if settings.remote_transcription_speech_runtime {
@@ -1748,26 +1800,10 @@ struct RemoteTranscriptionResponse {
     text: String,
 }
 
-/// Speech Runtime accepts the WAV body directly, and requires its own bearer
-/// token and a model query parameter. Its API is not OpenAI multipart.
+/// The Speech Runtime is a single local Parakeet service. Token discovery is
+/// internal: users never paste a key into Handy.
 #[cfg(target_os = "macos")]
-fn transcribe_speech_runtime(
-    audio: &[f32],
-    settings: &AppSettings,
-    timeout: Duration,
-) -> Result<String> {
-    let model = settings
-        .remote_transcription_speech_runtime_model
-        .trim()
-        .to_string();
-    if model.is_empty() {
-        return Err(anyhow::anyhow!("Speech Runtime model must not be empty"));
-    }
-    if settings.translate_to_english {
-        return Err(anyhow::anyhow!(
-            "Speech Runtime does not support translation; disable Translate to English"
-        ));
-    }
+fn speech_runtime_token() -> Result<String> {
     let home = std::env::var_os("HOME")
         .ok_or_else(|| anyhow::anyhow!("HOME is missing; cannot locate Speech Runtime token"))?;
     let path =
@@ -1779,85 +1815,140 @@ fn transcribe_speech_runtime(
             e
         )
     })?;
-    let token = token.trim().to_string();
+    let token = token.trim().to_owned();
     if token.is_empty() {
         return Err(anyhow::anyhow!("Speech Runtime token file is empty"));
     }
-    let language = settings.selected_language.clone();
-    let wav = encode_wav(audio)?;
+    Ok(token)
+}
 
-    // Handy may call this from an async task: keep the network runtime on its
-    // own thread, as in the existing remote transcription transport.
+#[cfg(target_os = "macos")]
+async fn ensure_speech_runtime_model(client: &reqwest::Client, token: &str) -> Result<()> {
+    let response = client
+        .get(format!("{SPEECH_RUNTIME_ORIGIN}/v1/models"))
+        .bearer_auth(token)
+        .send()
+        .await?;
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        return Err(anyhow::anyhow!(
+            "Speech Runtime model list returned {status}: {body}"
+        ));
+    }
+    let models: serde_json::Value = serde_json::from_str(&body)?;
+    let entry = models["models"]
+        .as_array()
+        .and_then(|models| {
+            models
+                .iter()
+                .find(|item| item["model"].as_str() == Some(SPEECH_RUNTIME_MODEL))
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Speech Runtime must have '{}' configured",
+                SPEECH_RUNTIME_MODEL
+            )
+        })?;
+    if entry["loaded"].as_bool() == Some(true) {
+        return Ok(());
+    }
+    let response = client
+        .post(format!("{SPEECH_RUNTIME_ORIGIN}/v1/models/load"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "model": SPEECH_RUNTIME_MODEL }))
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "Speech Runtime model load returned {}: {}",
+            response.status(),
+            response.text().await?
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn probe_speech_runtime_ready() -> Result<()> {
+    let token = speech_runtime_token()?;
+    // Called from the existing probe thread, never the Tauri event loop.
+    tauri::async_runtime::block_on(async move {
+        let client = reqwest::Client::builder()
+            .timeout(REMOTE_TRANSCRIPTION_TIMEOUT)
+            .connect_timeout(REMOTE_TRANSCRIPTION_CONNECT_TIMEOUT)
+            .build()?;
+        ensure_speech_runtime_model(&client, &token).await
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn probe_speech_runtime_ready() -> Result<()> {
+    Err(anyhow::anyhow!("Speech Runtime requires macOS"))
+}
+
+/// The batch endpoint takes WAV directly, not OpenAI multipart. Both dictation
+/// and file import use Parakeet Ultra; only the request priority is different.
+#[cfg(target_os = "macos")]
+fn transcribe_speech_runtime(
+    audio: &[f32],
+    settings: &AppSettings,
+    timeout: Duration,
+    priority: &str,
+    cancellation: Option<(Arc<AtomicU64>, u64)>,
+) -> Result<String> {
+    if settings.translate_to_english {
+        return Err(anyhow::anyhow!(
+            "Speech Runtime does not support translation; disable Translate to English"
+        ));
+    }
+    let token = speech_runtime_token()?;
+    let wav = encode_wav(audio)?;
+    let priority = priority.to_owned();
+
     thread::spawn(move || {
         tauri::async_runtime::block_on(async move {
-            let client = reqwest::Client::builder()
-                .timeout(timeout)
-                .connect_timeout(REMOTE_TRANSCRIPTION_CONNECT_TIMEOUT)
-                .build()?;
-            let models_response = client
-                .get(format!("{SPEECH_RUNTIME_ORIGIN}/v1/models"))
-                .bearer_auth(&token)
-                .send()
-                .await?;
-            let status = models_response.status();
-            let body = models_response.text().await?;
-            if !status.is_success() {
-                return Err(anyhow::anyhow!(
-                    "Speech Runtime model list returned {}: {}",
-                    status,
-                    body
-                ));
-            }
-            let list: serde_json::Value = serde_json::from_str(&body)?;
-            let entry = list["models"]
-                .as_array()
-                .and_then(|models| {
-                    models
-                        .iter()
-                        .find(|item| item["model"].as_str() == Some(model.as_str()))
-                })
-                .ok_or_else(|| {
-                    anyhow::anyhow!("Speech Runtime model '{}' is not configured", model)
-                })?;
-            if entry["loaded"].as_bool() != Some(true) {
+            let work = async {
+                let client = reqwest::Client::builder()
+                    .timeout(timeout)
+                    .connect_timeout(REMOTE_TRANSCRIPTION_CONNECT_TIMEOUT)
+                    .build()?;
+                ensure_speech_runtime_model(&client, &token).await?;
+                // Deliberately omit `language`: Parakeet Ultra's forced RU
+                // language hint suppresses Latin spellings of IT terms.
                 let response = client
-                    .post(format!("{SPEECH_RUNTIME_ORIGIN}/v1/models/load"))
+                    .post(format!("{SPEECH_RUNTIME_ORIGIN}/v1/audio/transcriptions"))
                     .bearer_auth(&token)
-                    .json(&serde_json::json!({ "model": model.clone() }))
+                    .header(reqwest::header::CONTENT_TYPE, "audio/wav")
+                    .query(&[("model", SPEECH_RUNTIME_MODEL), ("priority", &priority)])
+                    .body(wav)
                     .send()
                     .await?;
                 let status = response.status();
+                let body = response.text().await?;
                 if !status.is_success() {
                     return Err(anyhow::anyhow!(
-                        "Speech Runtime model load returned {}: {}",
-                        status,
-                        response.text().await?
+                        "Speech Runtime transcription returned {status}: {body}"
                     ));
                 }
+                let answer: RemoteTranscriptionResponse =
+                    serde_json::from_str(&body).map_err(|e| {
+                        anyhow::anyhow!("Invalid Speech Runtime transcription response: {e}")
+                    })?;
+                Ok(answer.text)
+            };
+            if let Some((generation, expected)) = cancellation {
+                tokio::select! {
+                    result = work => result,
+                    _ = async {
+                        while generation.load(Ordering::Acquire) == expected {
+                            tokio::time::sleep(Duration::from_millis(25)).await;
+                        }
+                    } => Err(anyhow::anyhow!("Speech Runtime request cancelled")),
+                }
+            } else {
+                work.await
             }
-            let mut request = client
-                .post(format!("{SPEECH_RUNTIME_ORIGIN}/v1/audio/transcriptions"))
-                .bearer_auth(&token)
-                .header(reqwest::header::CONTENT_TYPE, "audio/wav")
-                .query(&[("model", model.as_str()), ("priority", "interactive")])
-                .body(wav);
-            if !language.is_empty() && language != "auto" {
-                request = request.query(&[("language", language.as_str())]);
-            }
-            let response = request.send().await?;
-            let status = response.status();
-            let body = response.text().await?;
-            if !status.is_success() {
-                return Err(anyhow::anyhow!(
-                    "Speech Runtime transcription returned {}: {}",
-                    status,
-                    body
-                ));
-            }
-            let answer: RemoteTranscriptionResponse = serde_json::from_str(&body).map_err(|e| {
-                anyhow::anyhow!("Invalid Speech Runtime transcription response: {}", e)
-            })?;
-            Ok(answer.text)
         })
     })
     .join()
@@ -1869,6 +1960,8 @@ fn transcribe_speech_runtime(
     _audio: &[f32],
     _settings: &AppSettings,
     _timeout: Duration,
+    _priority: &str,
+    _cancellation: Option<(Arc<AtomicU64>, u64)>,
 ) -> Result<String> {
     Err(anyhow::anyhow!(
         "Speech Runtime integration is supported on macOS only"
@@ -1878,12 +1971,18 @@ fn transcribe_speech_runtime(
 /// Transcribe via an OpenAI-compatible server (`/audio/transcriptions`, or
 /// `/audio/translations` when translating to English). The local model is
 /// never loaded on this path.
-fn transcribe_remote(audio: &[f32], settings: &AppSettings, timeout: Duration) -> Result<String> {
+fn transcribe_remote(
+    audio: &[f32],
+    settings: &AppSettings,
+    timeout: Duration,
+    priority: &str,
+    cancellation: Option<(Arc<AtomicU64>, u64)>,
+) -> Result<String> {
     let st = Instant::now();
     let (url, text) = if settings.remote_transcription_speech_runtime {
         (
             format!("{SPEECH_RUNTIME_ORIGIN}/v1/audio/transcriptions"),
-            transcribe_speech_runtime(audio, settings, timeout)?,
+            transcribe_speech_runtime(audio, settings, timeout, priority, cancellation)?,
         )
     } else {
         let base_url = settings.remote_transcription_url.trim_end_matches('/');
@@ -1933,7 +2032,15 @@ fn transcribe_remote(audio: &[f32], settings: &AppSettings, timeout: Duration) -
     } else {
         OutputLanguageEvidence::Unknown
     };
-    let result = post_process_transcription_text(text, settings, true, &output_language, &[]);
+    // Speech Runtime has no initial vocabulary prompt: local corrections must
+    // still be applied after recognition rather than treated as ASR hints.
+    let result = post_process_transcription_text(
+        text,
+        settings,
+        !settings.remote_transcription_speech_runtime,
+        &output_language,
+        &[],
+    );
 
     let elapsed_secs = st.elapsed().as_secs_f64();
     let audio_secs = audio.len() as f64 / 16_000.0;
@@ -2666,6 +2773,7 @@ mod tests {
             SPEECH_RUNTIME_ORIGIN
         );
         assert!(remote_busy_timeout(&settings).is_none());
+        assert_eq!(SPEECH_RUNTIME_MODEL, "parakeet-ultra");
         assert_eq!(
             settings.remote_transcription_speech_runtime_model,
             "parakeet-ultra"

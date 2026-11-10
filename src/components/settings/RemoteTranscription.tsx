@@ -19,9 +19,6 @@ export const RemoteTranscription: React.FC<RemoteTranscriptionProps> =
     const enabled = getSetting("remote_transcription_enabled") ?? false;
     const speechRuntime =
       getSetting("remote_transcription_speech_runtime") ?? false;
-    const speechModel =
-      getSetting("remote_transcription_speech_runtime_model") ??
-      "parakeet-ultra";
     const url = getSetting("remote_transcription_url") ?? "";
     const apiKey = getSetting("remote_transcription_api_key") ?? "";
     const fallback = getSetting("remote_transcription_fallback") ?? true;
@@ -29,7 +26,6 @@ export const RemoteTranscription: React.FC<RemoteTranscriptionProps> =
       getSetting("remote_transcription_busy_timeout_ms") ?? 2000;
     const [localUrl, setLocalUrl] = useState(url);
     const [localApiKey, setLocalApiKey] = useState(apiKey);
-    const [localSpeechModel, setLocalSpeechModel] = useState(speechModel);
 
     useEffect(() => {
       setLocalUrl(url);
@@ -38,10 +34,6 @@ export const RemoteTranscription: React.FC<RemoteTranscriptionProps> =
     useEffect(() => {
       setLocalApiKey(apiKey);
     }, [apiKey]);
-
-    useEffect(() => {
-      setLocalSpeechModel(speechModel);
-    }, [speechModel]);
 
     return (
       <>
@@ -80,26 +72,7 @@ export const RemoteTranscription: React.FC<RemoteTranscriptionProps> =
             descriptionMode={descriptionMode}
             grouped={grouped}
           >
-            <Input
-              type="text"
-              value={localSpeechModel}
-              onChange={(event) => setLocalSpeechModel(event.target.value)}
-              onBlur={() => {
-                const model = localSpeechModel.trim();
-                if (model && model !== speechModel) {
-                  updateSetting(
-                    "remote_transcription_speech_runtime_model",
-                    model,
-                  );
-                } else if (!model) {
-                  setLocalSpeechModel(speechModel);
-                }
-              }}
-              placeholder="parakeet-ultra"
-              variant="compact"
-              disabled={isUpdating("remote_transcription_speech_runtime_model")}
-              className="flex-1 min-w-[280px]"
-            />
+            <div className="text-sm text-ink-2 py-2">Parakeet Ultra</div>
           </SettingContainer>
         )}
         {enabled && !speechRuntime && (
@@ -152,7 +125,8 @@ export const RemoteTranscription: React.FC<RemoteTranscriptionProps> =
             />
           </SettingContainer>
         )}
-        {enabled && (
+        {/* Parakeet-only mode must never fall back to a second ASR model. */}
+        {enabled && !speechRuntime && (
           <ToggleSwitch
             checked={fallback}
             onChange={(enabled) =>

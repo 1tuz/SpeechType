@@ -7,12 +7,15 @@ use std::time::Instant;
 use transcribe_cpp::Transcript;
 
 use super::{
-    agreed_language, engine_error, post_process_transcription_text, real_time_factor, BatchContext,
-    Transcription, TranscriptionManager,
+    agreed_language, engine_error, post_process_transcription_text, real_time_factor,
+    transcribe_remote, BatchContext, Transcription, TranscriptionManager,
+    REMOTE_TRANSCRIPTION_TIMEOUT,
 };
 use crate::audio_toolkit::chunking::Chunker;
 use crate::engine_supervisor::EngineError;
+use crate::language_detection::{LanguageDecision, LanguageSource};
 use crate::managers::audio::create_detector;
+use crate::settings::{get_settings, AppSettings};
 
 /// Tries per chunk when a dictation's cancel interrupts it.
 const MAX_CHUNK_ATTEMPTS: usize = 3;
@@ -33,6 +36,75 @@ pub trait ChunkControl {
 }
 
 impl TranscriptionManager {
+    /// File imports use the Runtime's batch priority and the same chunk/stop
+    /// protocol as the upstream local engine. No second ASR model is loaded.
+    fn transcribe_file_via_speech_runtime(
+        &self,
+        audio: &[f32],
+        settings: &AppSettings,
+        control: &dyn ChunkControl,
+    ) -> Result<Option<Transcription>> {
+        let started = Instant::now();
+        let total = audio.len();
+        let backend = settings.vad_backend;
+        let app_handle = self.app_handle.clone();
+        let mut chunker = Chunker::new(Box::new(move || create_detector(backend, &app_handle)));
+        let mut paragraphs: Vec<String> = Vec::new();
+        let mut done = 0;
+        control.progress(0, total);
+        let mut pieces = audio.chunks(FEED_SAMPLES);
+        loop {
+            if !control.proceed() {
+                return Ok(None);
+            }
+            let (chunks, last) = match pieces.next() {
+                Some(piece) => (chunker.push(piece), false),
+                None => (chunker.finish(), true),
+            };
+            for chunk in chunks {
+                if !control.proceed() {
+                    return Ok(None);
+                }
+                let text = transcribe_remote(
+                    &chunk,
+                    settings,
+                    REMOTE_TRANSCRIPTION_TIMEOUT,
+                    "batch",
+                    None,
+                )?;
+                if !text.trim().is_empty() {
+                    paragraphs.push(text);
+                }
+                done += chunk.len();
+                control.progress(done, total);
+            }
+            if last {
+                break;
+            }
+        }
+        let audio_secs = total as f64 / 16_000.0;
+        info!(
+            "Speech Runtime Parakeet file job: {:.1}s audio, {} paragraphs, {:.1}s wall",
+            audio_secs,
+            paragraphs.len(),
+            started.elapsed().as_secs_f64()
+        );
+        let language = match settings.selected_language.as_str() {
+            "" | "auto" => LanguageDecision {
+                language: None,
+                source: LanguageSource::Model,
+            },
+            other => LanguageDecision {
+                language: Some(other.to_owned()),
+                source: LanguageSource::Selected,
+            },
+        };
+        Ok(Some(Transcription {
+            text: paragraphs.join("\n\n"),
+            language: Some(language),
+        }))
+    }
+
     /// Transcribe `audio` chunk by chunk with the selected model, one
     /// paragraph per chunk. `None` if `control` stopped it.
     pub fn transcribe_in_chunks(
@@ -50,7 +122,13 @@ impl TranscriptionManager {
         }
 
         self.touch_activity();
-        // File jobs always run on the local model, even with an external server.
+        let current_settings = get_settings(&self.app_handle);
+        if current_settings.remote_transcription_enabled
+            && current_settings.remote_transcription_speech_runtime
+        {
+            return self.transcribe_file_via_speech_runtime(&audio, &current_settings, control);
+        }
+        // Generic external Whisper-server mode keeps upstream's local file path.
         self.initiate_local_model_load(false);
         // Read once: the model can't change until the job ends.
         let BatchContext {
