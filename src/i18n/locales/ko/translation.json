@@ -22,6 +22,11 @@
     "about": "정보"
   },
   "onboarding": {
+    "runtime": {
+      "choose": "Use Speech Runtime",
+      "checking": "Checking Speech Runtime…",
+      "failed": "Speech Runtime unavailable"
+    },
     "customModelDescription": "공식 지원되지 않음",
     "migration": {
       "title": "모델 업데이트가 필요합니다",

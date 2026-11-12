@@ -1823,7 +1823,7 @@ fn speech_runtime_token() -> Result<String> {
 }
 
 #[cfg(target_os = "macos")]
-async fn ensure_speech_runtime_model(client: &reqwest::Client, token: &str) -> Result<()> {
+async fn speech_runtime_model_loaded(client: &reqwest::Client, token: &str) -> Result<bool> {
     let response = client
         .get(format!("{SPEECH_RUNTIME_ORIGIN}/v1/models"))
         .bearer_auth(token)
@@ -1850,7 +1850,12 @@ async fn ensure_speech_runtime_model(client: &reqwest::Client, token: &str) -> R
                 SPEECH_RUNTIME_MODEL
             )
         })?;
-    if entry["loaded"].as_bool() == Some(true) {
+    Ok(entry["loaded"].as_bool() == Some(true))
+}
+
+#[cfg(target_os = "macos")]
+async fn ensure_speech_runtime_model(client: &reqwest::Client, token: &str) -> Result<()> {
+    if speech_runtime_model_loaded(client, token).await? {
         return Ok(());
     }
     let response = client
@@ -1869,12 +1874,33 @@ async fn ensure_speech_runtime_model(client: &reqwest::Client, token: &str) -> R
     Ok(())
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn check_speech_runtime() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let token = speech_runtime_token().map_err(|e| e.to_string())?;
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|e| e.to_string())?;
+        speech_runtime_model_loaded(&client, &token)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    Err("Speech Runtime requires macOS".to_string())
+}
+
 #[cfg(target_os = "macos")]
 fn probe_speech_runtime_ready() -> Result<()> {
     let token = speech_runtime_token()?;
     // Called from the existing probe thread, never the Tauri event loop.
     tauri::async_runtime::block_on(async move {
         let client = reqwest::Client::builder()
+            .no_proxy()
             .timeout(REMOTE_TRANSCRIPTION_TIMEOUT)
             .connect_timeout(REMOTE_TRANSCRIPTION_CONNECT_TIMEOUT)
             .build()?;
@@ -1910,6 +1936,7 @@ fn transcribe_speech_runtime(
         tauri::async_runtime::block_on(async move {
             let work = async {
                 let client = reqwest::Client::builder()
+                    .no_proxy()
                     .timeout(timeout)
                     .connect_timeout(REMOTE_TRANSCRIPTION_CONNECT_TIMEOUT)
                     .build()?;

@@ -22,6 +22,11 @@
     "about": "关于"
   },
   "onboarding": {
+    "runtime": {
+      "choose": "Use Speech Runtime",
+      "checking": "Checking Speech Runtime…",
+      "failed": "Speech Runtime unavailable"
+    },
     "customModelDescription": "非官方支持",
     "migration": {
       "title": "您的模型需要更新",

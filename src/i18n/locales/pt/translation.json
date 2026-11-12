@@ -22,6 +22,11 @@
     "about": "Sobre"
   },
   "onboarding": {
+    "runtime": {
+      "choose": "Use Speech Runtime",
+      "checking": "Checking Speech Runtime…",
+      "failed": "Speech Runtime unavailable"
+    },
     "customModelDescription": "Não suportado oficialmente",
     "migration": {
       "title": "Seus modelos precisam de uma atualização",

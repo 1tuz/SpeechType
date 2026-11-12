@@ -22,6 +22,11 @@
     "about": "За приложението"
   },
   "onboarding": {
+    "runtime": {
+      "choose": "Use Speech Runtime",
+      "checking": "Checking Speech Runtime…",
+      "failed": "Speech Runtime unavailable"
+    },
     "customModelDescription": "Не се поддържа официално",
     "migration": {
       "title": "Моделите ви се нуждаят от обновяване",

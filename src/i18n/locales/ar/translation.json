@@ -22,6 +22,11 @@
     "about": "حول"
   },
   "onboarding": {
+    "runtime": {
+      "choose": "Use Speech Runtime",
+      "checking": "Checking Speech Runtime…",
+      "failed": "Speech Runtime unavailable"
+    },
     "customModelDescription": "غير مدعوم رسميًا",
     "migration": {
       "title": "نماذجك بحاجة إلى تحديث",

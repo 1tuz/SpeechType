@@ -732,6 +732,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_remote_transcription_enabled_setting,
             shortcut::change_remote_transcription_url_setting,
             shortcut::change_remote_transcription_speech_runtime_setting,
+            managers::transcription::check_speech_runtime,
             shortcut::change_remote_transcription_speech_runtime_model_setting,
             shortcut::change_remote_transcription_api_key_setting,
             shortcut::change_remote_transcription_fallback_setting,

@@ -22,6 +22,11 @@
     "about": "אודות"
   },
   "onboarding": {
+    "runtime": {
+      "choose": "Use Speech Runtime",
+      "checking": "Checking Speech Runtime…",
+      "failed": "Speech Runtime unavailable"
+    },
     "customModelDescription": "לא נתמך באופן רשמי",
     "migration": {
       "title": "המודלים שלך צריכים עדכון",

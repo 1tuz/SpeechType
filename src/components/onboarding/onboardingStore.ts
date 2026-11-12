@@ -35,6 +35,7 @@ interface Persisted {
   extraModelId: string | null;
   /** The model being downloaded, or already on disk (catalog id). */
   downloadId: string | null;
+  runtime: boolean;
   /** Back after the Accessibility relaunch: Permissions says so. */
   welcomeBack: boolean;
   /** Which ways of using the shortcut they've done for real (Try it). */
@@ -66,6 +67,7 @@ const fresh = (): Persisted => ({
   modelId: null,
   extraModelId: null,
   downloadId: null,
+  runtime: false,
   welcomeBack: false,
   lessons: { hold: false, tap: false },
   returnTo: null,
@@ -98,6 +100,7 @@ const load = (): Persisted => {
       modelId: pick("modelId", isId),
       extraModelId: pick("extraModelId", isId),
       downloadId: pick("downloadId", isId),
+      runtime: pick("runtime", isBool),
       welcomeBack: pick("welcomeBack", isBool),
       returnTo: pick(
         "returnTo",
@@ -127,6 +130,7 @@ const save = (state: OnboardingState) => {
     modelId: state.modelId,
     extraModelId: state.extraModelId,
     downloadId: state.downloadId,
+    runtime: state.runtime,
     welcomeBack: state.welcomeBack,
     lessons: state.lessons,
     returnTo: state.returnTo,

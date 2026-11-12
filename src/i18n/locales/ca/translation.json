@@ -22,6 +22,11 @@
     "about": "Quant a"
   },
   "onboarding": {
+    "runtime": {
+      "choose": "Use Speech Runtime",
+      "checking": "Checking Speech Runtime…",
+      "failed": "Speech Runtime unavailable"
+    },
     "customModelDescription": "Sense suport oficial",
     "migration": {
       "title": "Cal actualitzar els vostres models",

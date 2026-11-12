@@ -22,6 +22,11 @@
     "about": "Інфо"
   },
   "onboarding": {
+    "runtime": {
+      "choose": "Use Speech Runtime",
+      "checking": "Checking Speech Runtime…",
+      "failed": "Speech Runtime unavailable"
+    },
     "customModelDescription": "Офіційно не підтримується",
     "migration": {
       "title": "Ваші моделі потребують оновлення",

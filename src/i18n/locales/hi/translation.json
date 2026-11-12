@@ -22,6 +22,11 @@
     "about": "के बारे में"
   },
   "onboarding": {
+    "runtime": {
+      "choose": "Use Speech Runtime",
+      "checking": "Checking Speech Runtime…",
+      "failed": "Speech Runtime unavailable"
+    },
     "customModelDescription": "आधिकारिक रूप से समर्थित नहीं",
     "migration": {
       "title": "आपके मॉडल को अपडेट की ज़रूरत है",

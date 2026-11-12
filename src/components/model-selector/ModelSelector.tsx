@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { commands } from "@/bindings";
+import { useSettings } from "@/hooks/useSettings";
 import { getTranslatedModelName } from "../../lib/utils/modelTranslation";
 import { useModelStore } from "../../stores/modelStore";
 import { LANGUAGE_DETECTOR_ID } from "../../hooks/useLanguageDetector";
@@ -30,6 +31,10 @@ interface ModelSelectorProps {
 
 const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
   const { t } = useTranslation();
+  const { settings } = useSettings();
+  const runtime =
+    settings?.remote_transcription_enabled &&
+    settings?.remote_transcription_speech_runtime;
   const {
     models,
     currentModel,
@@ -160,6 +165,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
   };
 
   const getModelDisplayText = (): string => {
+    if (runtime) return "Speech Runtime";
     const verifyingKeys = Object.keys(verifyingModels);
     if (verifyingKeys.length > 0) {
       if (verifyingKeys.length === 1) {
@@ -220,6 +226,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
 
   // Derive display status from model status + store state
   const getDisplayStatus = (): ModelStatus => {
+    if (runtime) return "unloaded";
     if (Object.keys(verifyingModels).length > 0) return "verifying";
     if (Object.keys(downloadProgress).length > 0) return "downloading";
     return modelStatus;

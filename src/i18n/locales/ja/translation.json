@@ -22,6 +22,11 @@
     "about": "概要"
   },
   "onboarding": {
+    "runtime": {
+      "choose": "Use Speech Runtime",
+      "checking": "Checking Speech Runtime…",
+      "failed": "Speech Runtime unavailable"
+    },
     "customModelDescription": "公式サポート対象外",
     "migration": {
       "title": "モデルの更新が必要です",

@@ -415,6 +415,14 @@ async changeRemoteTranscriptionSpeechRuntimeSetting(enabled: boolean) : Promise<
     else return { status: "error", error: e  as any };
 }
 },
+async checkSpeechRuntime() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("check_speech_runtime") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeRemoteTranscriptionSpeechRuntimeModelSetting(model: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_remote_transcription_speech_runtime_model_setting", { model }) };

@@ -22,6 +22,11 @@
     "about": "Om"
   },
   "onboarding": {
+    "runtime": {
+      "choose": "Use Speech Runtime",
+      "checking": "Checking Speech Runtime…",
+      "failed": "Speech Runtime unavailable"
+    },
     "customModelDescription": "Stöds inte officiellt",
     "migration": {
       "title": "Dina modeller behöver uppdateras",

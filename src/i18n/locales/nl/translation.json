@@ -22,6 +22,11 @@
     "about": "Over SpeechType"
   },
   "onboarding": {
+    "runtime": {
+      "choose": "Use Speech Runtime",
+      "checking": "Checking Speech Runtime…",
+      "failed": "Speech Runtime unavailable"
+    },
     "customModelDescription": "Niet officieel ondersteund",
     "migration": {
       "title": "Je modellen moeten worden bijgewerkt",

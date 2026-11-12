@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands, type ChineseScript } from "@/bindings";
 import { useSettings } from "@/hooks/useSettings";
@@ -22,6 +22,7 @@ import { useOnboardingModels } from "./useOnboardingModels";
 import { useModelStore } from "@/stores/modelStore";
 import { moveScreens } from "./screenTransitions";
 import { downloadPick } from "./downloadPick";
+import { connectSpeechRuntime } from "./speechRuntime";
 import "./screenTransitions.css";
 
 interface OnboardingFlowProps {
@@ -48,7 +49,9 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
 }) => {
   const { i18n } = useTranslation();
   const store = useOnboardingStore();
-  const { settings, updateSetting } = useSettings();
+  const { settings, updateSetting, refreshSettings } = useSettings();
+  const [runtimeBusy, setRuntimeBusy] = useState(false);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const permissions = usePermissions(preview);
   const osType = useOsType();
   const models = useOnboardingModels(store.languages);
@@ -59,7 +62,8 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
   // download interrupted by a quit. Reads the store since reset() runs first.
   useEffect(() => {
     if (preview || !models.offered.length) return;
-    const { downloadId } = useOnboardingStore.getState();
+    const { downloadId, runtime } = useOnboardingStore.getState();
+    if (runtime) return;
     if (downloadId) {
       const model = models.offered.find((m) => m.id === downloadId);
       if (model && models.downloadState(model).state === "none")
@@ -159,9 +163,58 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
     if (!preview) clearOnboardingProgress();
   };
 
-  const chooseModel = (id: string) => {
-    startModel(id);
-    onward();
+  const chooseModel = async (id: string) => {
+    try {
+      if (!preview && settings?.remote_transcription_enabled) {
+        const result =
+          await commands.changeRemoteTranscriptionEnabledSetting(false);
+        if (result.status === "error") throw new Error(result.error);
+        await refreshSettings();
+      }
+      store.set({ runtime: false });
+      startModel(id);
+      onward();
+    } catch (error) {
+      setRuntimeError(String(error));
+    }
+  };
+
+  const chooseRuntime = async () => {
+    setRuntimeBusy(true);
+    setRuntimeError(null);
+    try {
+      if (!preview) {
+        await connectSpeechRuntime(
+          async () => {
+            const result = await commands.checkSpeechRuntime();
+            if (result.status === "error") throw new Error(result.error);
+          },
+          async (key) => {
+            const result =
+              key === "remote_transcription_enabled"
+                ? await commands.changeRemoteTranscriptionEnabledSetting(true)
+                : await commands.changeRemoteTranscriptionSpeechRuntimeSetting(
+                    true,
+                  );
+            if (result.status === "error") throw new Error(result.error);
+          },
+        );
+        await refreshSettings();
+      }
+      const previous = models.offered.find((m) => m.id === store.downloadId);
+      const previousInfo = previous && models.infoFor(previous);
+      if (
+        previousInfo &&
+        models.downloadState(previous).state === "downloading"
+      )
+        useModelStore.getState().cancelDownload(previousInfo.id);
+      store.set({ runtime: true, downloadId: null, downloadFailed: false });
+      onward();
+    } catch (error) {
+      setRuntimeError(String(error));
+    } finally {
+      setRuntimeBusy(false);
+    }
   };
 
   const startModel = (id: string) => {
@@ -174,7 +227,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
   const downloadNow = preview
     ? ({ state: "ready" } as const)
     : models.downloadState(downloaded);
-  const modelReady = downloadNow.state === "ready";
+  const modelReady = store.runtime || downloadNow.state === "ready";
 
   const saveLanguages = () => {
     if (preview) return;
@@ -212,6 +265,9 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
           models={models}
           onBack={store.returnTo ? () => go(store.returnTo!) : back}
           onChoose={chooseModel}
+          onRuntime={osType === "macos" ? chooseRuntime : undefined}
+          runtimeBusy={runtimeBusy}
+          runtimeError={runtimeError}
         />
       );
     case "demo":
@@ -221,7 +277,11 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
           os={osType}
           ready={modelReady}
           downloadFailed={downloadNow.state === "failed"}
-          download={<DownloadStatus models={models} model={downloaded} />}
+          download={
+            store.runtime ? null : (
+              <DownloadStatus models={models} model={downloaded} />
+            )
+          }
           onRetry={() => downloaded && startModel(downloaded.id)}
           onBack={back}
           onContinue={() => moveScreens("in", next)}
@@ -238,10 +298,17 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({
           finished={step === "done"}
           // Falls back to the selected model in a preview.
           model={
-            downloaded ?? models.catalogFor(settings?.selected_model ?? "")
+            store.runtime
+              ? models.offered.find((m) => m.name === "Parakeet Ultra")
+              : (downloaded ??
+                models.catalogFor(settings?.selected_model ?? ""))
           }
           ready={modelReady}
-          download={<DownloadStatus models={models} model={downloaded} />}
+          download={
+            store.runtime ? null : (
+              <DownloadStatus models={models} model={downloaded} />
+            )
+          }
           onChangeModel={() => go("model")}
           onEdit={(to) => store.set({ step: to, returnTo: "done" })}
           onBack={() => moveScreens("out", back)}

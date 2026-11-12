@@ -22,6 +22,11 @@
     "about": "Hakkında"
   },
   "onboarding": {
+    "runtime": {
+      "choose": "Use Speech Runtime",
+      "checking": "Checking Speech Runtime…",
+      "failed": "Speech Runtime unavailable"
+    },
     "customModelDescription": "Resmi olarak desteklenmiyor",
     "migration": {
       "title": "Modellerinizin güncellenmesi gerekiyor",

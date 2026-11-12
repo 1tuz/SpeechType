@@ -72,6 +72,9 @@ interface ModelProps {
   onBack?: () => void;
   /** The picked model (catalog id), once Download or Continue is pressed. */
   onChoose: (modelId: string) => void;
+  onRuntime?: () => void;
+  runtimeBusy?: boolean;
+  runtimeError?: string | null;
 }
 
 /** Screen 3: pick one of three suggested models, or Show all for the table. */
@@ -80,6 +83,9 @@ export const Model: React.FC<ModelProps> = ({
   models,
   onBack,
   onChoose,
+  onRuntime,
+  runtimeBusy,
+  runtimeError,
 }) => {
   const { t, i18n } = useTranslation();
   const words = useDownloadWords();
@@ -484,18 +490,41 @@ export const Model: React.FC<ModelProps> = ({
       ? { name: loading.name, percent: words.percent(loadingState) }
       : null;
   const primary = (
-    <Button variant="primary" size="lg" onClick={() => onChoose(selectedId)}>
-      {continuing
-        ? t("onboarding.shell.continue")
-        : t(
-            switching
-              ? "onboarding.model.downloadInstead"
-              : "onboarding.model.download",
-            { size: sizeOf(selected) },
-          )}
-    </Button>
+    <>
+      {onRuntime && (
+        <Button
+          variant="secondary"
+          size="lg"
+          disabled={runtimeBusy}
+          onClick={onRuntime}
+        >
+          {runtimeBusy
+            ? t("onboarding.runtime.checking")
+            : t("onboarding.runtime.choose")}
+        </Button>
+      )}
+      <Button
+        variant="primary"
+        size="lg"
+        disabled={runtimeBusy}
+        onClick={() => onChoose(selectedId)}
+      >
+        {continuing
+          ? t("onboarding.shell.continue")
+          : t(
+              switching
+                ? "onboarding.model.downloadInstead"
+                : "onboarding.model.download",
+              { size: sizeOf(selected) },
+            )}
+      </Button>
+    </>
   );
-  const hint = switching ? (
+  const hint = runtimeError ? (
+    <span role="alert">
+      {t("onboarding.runtime.failed")}: {runtimeError}
+    </span>
+  ) : switching ? (
     <div className="text-start leading-[1.35]">
       <div className="truncate font-medium text-text">
         {t("onboarding.model.pauses", switching)}
